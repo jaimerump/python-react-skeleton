@@ -1,12 +1,18 @@
+# Base stack: db -> migrations -> api -> ui.
+# The SQS worker + LocalStack live in docker-compose.localstack.yml (on by default via Tilt).
+#
+# Ordering uses `depends_on` *conditions* so a plain `docker compose up` boots correctly.
+# Tilt ignores these conditions and re-declares the order with resource_deps (see Tiltfile).
+
 services:
-  postgres:
+  db:
     image: postgres:16
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: app
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -15,12 +21,65 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  localstack:
-    image: localstack/localstack:3
+  migrations:
+    image: ${API_IMAGE:-app_api}
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    command: alembic upgrade head
     environment:
-      SERVICES: sqs
+      APP_DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    image: ${API_IMAGE:-app_api}
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
-      - "4566:4566"
+      - "${API_PORT:-8000}:8000"
+    environment:
+      APP_ENVIRONMENT: development
+      APP_DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/app
+    # Bind-mount the repo for live reload; the anonymous volume keeps the image's
+    # /app/.venv from being shadowed by the host checkout.
+    volumes:
+      - .:/app
+      - /app/.venv
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      db:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  ui:
+    image: ${UI_IMAGE:-app_ui}
+    build:
+      context: ./ui
+      dockerfile: ./Dockerfile
+      target: dev
+    ports:
+      - "${UI_PORT:-5173}:5173"
+    environment:
+      # Empty so the browser calls relative /api and Vite's dev proxy forwards it
+      # to the api service (no CORS, no hardcoded host).
+      VITE_API_URL: ""
+      VITE_PROXY_TARGET: http://api:8000
+    volumes:
+      - ./ui:/app
+      - ui_node_modules:/app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   postgres_data:
+  ui_node_modules:

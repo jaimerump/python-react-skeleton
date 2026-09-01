@@ -1,0 +1,11 @@
+# Keep the build context small and never leak host-only files into the image.
+node_modules
+dist
+.vite
+*.tsbuildinfo
+coverage
+playwright-report
+test-results
+blob-report
+.env
+.env.*
