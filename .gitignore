@@ -25,3 +25,35 @@ htmlcov/
 
 # Ruff
 .ruff_cache/
+
+# --- Frontend (ui/) ---
+# Dependencies
+node_modules/
+
+# Build output / caches
+ui/dist/
+ui/.vite/
+*.tsbuildinfo
+
+# Local env (ui/.env.example IS committed)
+.env.local
+.env.*.local
+*.local
+
+# Test / coverage
+ui/coverage/
+
+# Playwright
+ui/playwright-report/
+ui/test-results/
+ui/blob-report/
+ui/playwright/.cache/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
