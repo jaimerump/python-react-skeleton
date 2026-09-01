@@ -1,0 +1,18 @@
+# Keep the build context small and never leak host-only files into the image.
+.git
+.venv
+__pycache__
+*.py[codz]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+.coverage.*
+coverage.xml
+htmlcov
+.env
+.env.*
+.context
+ui
+docs
+tests

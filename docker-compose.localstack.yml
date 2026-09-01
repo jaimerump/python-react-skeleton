@@ -1,0 +1,75 @@
+# LocalStack overlay: mocks SQS, provisions the queues, and runs the worker.
+# On by default; opt out with `tilt up -- --no-localstack` (or TILT_NO_LOCALSTACK=1).
+#
+# Stacked as: docker compose -f docker-compose.yml -f docker-compose.localstack.yml ...
+# Each block only overrides what it changes.
+
+x-sqs-env: &sqs-env
+  APP_AWS_ENDPOINT_URL: http://localstack:4566
+  APP_AWS_REGION: us-east-1
+  APP_SQS_QUEUE_URL: http://localstack:4566/000000000000/app-jobs
+  APP_SQS_DLQ_URL: http://localstack:4566/000000000000/app-jobs-dlq
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+
+services:
+  localstack:
+    image: localstack/localstack:3
+    environment:
+      SERVICES: sqs
+    ports:
+      - "${LOCALSTACK_PORT:-4566}:4566"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: create the DLQ, then the main queue with a redrive policy pointing at it.
+  localstack-init:
+    image: amazon/aws-cli:latest
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    # Single literal-block string so it reaches `sh -c` intact. create-queue is
+    # idempotent, so re-runs are safe.
+    command:
+      - |
+        set -e
+        aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name app-jobs-dlq
+        aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name app-jobs \
+          --attributes '{"RedrivePolicy":"{\"deadLetterTargetArn\":\"arn:aws:sqs:us-east-1:000000000000:app-jobs-dlq\",\"maxReceiveCount\":\"5\"}","VisibilityTimeout":"300"}'
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  # api enqueues, so it needs the SQS env too.
+  api:
+    environment:
+      <<: *sqs-env
+    depends_on:
+      localstack-init:
+        condition: service_completed_successfully
+
+  worker:
+    image: ${API_IMAGE:-app_api}
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    command: python -m app.worker
+    environment:
+      <<: *sqs-env
+      APP_ENVIRONMENT: development
+      APP_DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/app
+    volumes:
+      - .:/app
+      - /app/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+      localstack-init:
+        condition: service_completed_successfully
